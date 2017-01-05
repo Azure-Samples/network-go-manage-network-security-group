@@ -1,0 +1,12 @@
+package: github.com/marstr/nsg-sample
+import:
+- package: github.com/Azure/azure-sdk-for-go
+  version: ~7.0.1-beta
+  subpackages:
+  - arm/network
+- package: github.com/Azure/go-autorest
+  version: ~7.2.2
+  subpackages:
+  - autorest/azure
+- package: github.com/marstr/guid
+  version: ~0.2.1
