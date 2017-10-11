@@ -15,6 +15,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/arm/network"
 	"github.com/Azure/azure-sdk-for-go/arm/resources/resources"
 	"github.com/Azure/go-autorest/autorest"
+	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/marstr/guid"
@@ -39,7 +40,7 @@ var (
 	clientID       string
 	clientSecret   string
 	tenantID       string
-	token          *azure.ServicePrincipalToken
+	token          *adal.ServicePrincipalToken
 )
 
 // User adjustable variables to customized execution environment depending on
@@ -84,6 +85,8 @@ func main() {
 		return
 	}
 
+	bearer := autorest.NewBearerAuthorizer(token)
+
 	cancel := make(chan struct{})
 
 	// Make an isolated environment to store assets created for this sample.
@@ -103,7 +106,7 @@ func main() {
 
 	// Create two Network Security Groups, one to be used for front-end requests, another for back-end
 	nsgClient := network.NewSecurityGroupsClient(subscriptionID)
-	nsgClient.Authorizer = token
+	nsgClient.Authorizer = bearer
 
 	frontEndNSG, err := createNetworkSecurityGroup(nsgClient, resourceGroupName, "frontend", cancel)
 	if nil != err {
@@ -119,7 +122,7 @@ func main() {
 
 	//Create Subnets to host Virtual Machines which will be protected by the rules above.
 	subNetClient := network.NewSubnetsClient(subscriptionID)
-	subNetClient.Authorizer = token
+	subNetClient.Authorizer = bearer
 
 	frontendAddressPrefix := to.StringPtr("192.168.1.0/24")
 	frontendSubnet := network.Subnet{
@@ -139,8 +142,10 @@ func main() {
 		},
 	}
 
-	_, err = executeWithStatus(func() (autorest.Response, error) {
-		return subNetClient.CreateOrUpdate(resourceGroupName, vNetName, *frontendSubnet.Name, frontendSubnet, cancel)
+	_, err = executeWithStatus(func() (resp autorest.Response, err error) {
+		respChan, errChan := subNetClient.CreateOrUpdate(resourceGroupName, vNetName, *frontendSubnet.Name, frontendSubnet, cancel)
+		resp, err = (<-respChan).Response, <-errChan
+		return
 	}, fmt.Sprintf("Creating Subnet '%s'", *frontendSubnet.Name))
 	if err != nil {
 		exitStatus = ExitSubnetCreationFailure
@@ -148,7 +153,8 @@ func main() {
 	}
 
 	_, err = executeWithStatus(func() (autorest.Response, error) {
-		return subNetClient.CreateOrUpdate(resourceGroupName, vNetName, *backendSubnet.Name, backendSubnet, cancel)
+		respChan, errChan := subNetClient.CreateOrUpdate(resourceGroupName, vNetName, *backendSubnet.Name, backendSubnet, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Subnet '%s'", *backendSubnet.Name))
 	if err != nil {
 		exitStatus = ExitSubnetCreationFailure
@@ -157,7 +163,7 @@ func main() {
 
 	// Create the security rules that should be enforced, and associate them with their respective security group.
 	ruleClient := network.NewSecurityRulesClient(subscriptionID)
-	ruleClient.Authorizer = token
+	ruleClient.Authorizer = autorest.NewBearerAuthorizer(token)
 
 	anyPortRange := "*"
 	anyAddressPrefix := "*"
@@ -169,20 +175,21 @@ func main() {
 	frontendSSHRule := network.SecurityRule{
 		Name: &frontendSSHRuleName,
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-			Access: network.Allow,
+			Access: network.SecurityRuleAccessAllow,
 			DestinationAddressPrefix: &anyAddressPrefix,
 			DestinationPortRange:     &sshPortRange,
-			Direction:                network.Inbound,
+			Direction:                network.SecurityRuleDirectionInbound,
 			Description:              &sshRuleDesc,
 			Priority:                 &sshRulePriority,
-			Protocol:                 network.TCP,
+			Protocol:                 network.SecurityRuleProtocolTCP,
 			SourceAddressPrefix:      &anyAddressPrefix,
 			SourcePortRange:          &anyPortRange,
 		},
 	}
 
 	_, err = executeWithStatus(func() (autorest.Response, error) {
-		return ruleClient.CreateOrUpdate(resourceGroupName, *frontEndNSG.Name, frontendSSHRuleName, frontendSSHRule, cancel)
+		respChan, errChan := ruleClient.CreateOrUpdate(resourceGroupName, *frontEndNSG.Name, frontendSSHRuleName, frontendSSHRule, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Security Rule '%s'", *frontendSSHRule.Description))
 	if nil != err {
 		exitStatus = ExitSecurityRuleCreationFailure
@@ -192,20 +199,21 @@ func main() {
 	frontendHTTPRuleName := "ALLOW-HTTP"
 	frontendHTTPRule := network.SecurityRule{
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-			Access: network.Allow,
+			Access: network.SecurityRuleAccessAllow,
 			DestinationAddressPrefix: &anyAddressPrefix,
 			DestinationPortRange:     to.StringPtr("80"),
-			Direction:                network.Inbound,
+			Direction:                network.SecurityRuleDirectionInbound,
 			Description:              to.StringPtr("Allow HTTP"),
 			Priority:                 to.Int32Ptr(101),
-			Protocol:                 network.TCP,
+			Protocol:                 network.SecurityRuleProtocolTCP,
 			SourceAddressPrefix:      &anyAddressPrefix,
 			SourcePortRange:          &anyPortRange,
 		},
 	}
 
 	executeWithStatus(func() (autorest.Response, error) {
-		return ruleClient.CreateOrUpdate(resourceGroupName, *frontEndNSG.Name, frontendHTTPRuleName, frontendHTTPRule, cancel)
+		respChan, errChan := ruleClient.CreateOrUpdate(resourceGroupName, *frontEndNSG.Name, frontendHTTPRuleName, frontendHTTPRule, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Security Rule '%s'", *frontendHTTPRule.Description))
 
 	if nil != err {
@@ -216,39 +224,41 @@ func main() {
 	sqlRuleName := "ALLOW-SQL"
 	backendSQLRule := network.SecurityRule{
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-			Access: network.Allow,
+			Access: network.SecurityRuleAccessAllow,
 			DestinationAddressPrefix: &anyAddressPrefix,
 			DestinationPortRange:     to.StringPtr("1433"),
-			Direction:                network.Inbound,
+			Direction:                network.SecurityRuleDirectionInbound,
 			Description:              to.StringPtr("Allow SQL"),
 			Priority:                 to.Int32Ptr(100),
-			Protocol:                 network.TCP,
+			Protocol:                 network.SecurityRuleProtocolTCP,
 			SourceAddressPrefix:      frontendAddressPrefix,
 			SourcePortRange:          &anyPortRange,
 		},
 	}
 
 	executeWithStatus(func() (autorest.Response, error) {
-		return ruleClient.CreateOrUpdate(resourceGroupName, *backEndNSG.Name, sqlRuleName, backendSQLRule, cancel)
+		respChan, errChan := ruleClient.CreateOrUpdate(resourceGroupName, *backEndNSG.Name, sqlRuleName, backendSQLRule, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Security Rule \"%s\"", sqlRuleName))
 
 	outDenyName := "DENY-OUT"
 	backendOutboundRule := network.SecurityRule{
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-			Access: network.Deny,
+			Access: network.SecurityRuleAccessDeny,
 			DestinationAddressPrefix: &anyAddressPrefix,
 			DestinationPortRange:     &anyPortRange,
-			Direction:                network.Outbound,
+			Direction:                network.SecurityRuleDirectionOutbound,
 			Description:              to.StringPtr("Deny Outbound traffic"),
 			Priority:                 to.Int32Ptr(100),
-			Protocol:                 network.Asterisk,
+			Protocol:                 network.SecurityRuleProtocolAsterisk,
 			SourceAddressPrefix:      &anyAddressPrefix,
 			SourcePortRange:          &anyPortRange,
 		},
 	}
 
 	executeWithStatus(func() (autorest.Response, error) {
-		return ruleClient.CreateOrUpdate(resourceGroupName, *backEndNSG.Name, outDenyName, backendOutboundRule, cancel)
+		respChan, errChan := ruleClient.CreateOrUpdate(resourceGroupName, *backEndNSG.Name, outDenyName, backendOutboundRule, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Security Rule \"%s\"", outDenyName))
 
 	// Give the user time to go inspect their subscription if they desire.
@@ -294,13 +304,14 @@ func init() {
 	}
 
 	//Authenticate
-	authConfig, err := azure.PublicCloud.OAuthConfigForTenant(tenantID)
+
+	authConfig, err := adal.NewOAuthConfig(azure.PublicCloud.ActiveDirectoryEndpoint, tenantID)
 	if nil != err {
 		fmt.Fprint(os.Stderr, err)
 		return
 	}
 
-	token, err = azure.NewServicePrincipalToken(*authConfig, clientID, clientSecret, azure.PublicCloud.ResourceManagerEndpoint)
+	token, err = adal.NewServicePrincipalToken(*authConfig, clientID, clientSecret, azure.PublicCloud.ResourceManagerEndpoint)
 	if nil != err {
 		fmt.Fprint(os.Stderr, err)
 		return
@@ -313,7 +324,8 @@ func createNetworkSecurityGroup(client network.SecurityGroupsClient, resourceGro
 		Location: &sampleLocation,
 	}
 	_, err := executeWithStatus(func() (autorest.Response, error) {
-		return client.CreateOrUpdate(resourceGroupName, name, args, cancel)
+		respChan, errChan := client.CreateOrUpdate(resourceGroupName, name, args, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Network Security Group '%s'", name))
 
 	result, err := client.Get(resourceGroupName, *args.Name, "")
@@ -322,7 +334,7 @@ func createNetworkSecurityGroup(client network.SecurityGroupsClient, resourceGro
 
 func createResourceGroup(cancel <-chan struct{}) (resources.GroupsClient, string, error) {
 	resourceGroupClient := resources.NewGroupsClient(subscriptionID)
-	resourceGroupClient.Authorizer = token
+	resourceGroupClient.Authorizer = autorest.NewBearerAuthorizer(token)
 
 	resourceGroupName, err := getUniqueResourceGroupName(resourceGroupClient)
 	if err != nil {
@@ -347,7 +359,8 @@ func createResourceGroup(cancel <-chan struct{}) (resources.GroupsClient, string
 
 func deleteResourceGroup(client resources.GroupsClient, name string, cancel <-chan struct{}) error {
 	_, err := executeWithStatus(func() (autorest.Response, error) {
-		return client.Delete(name, cancel)
+		respChan, errChan := client.Delete(name, cancel)
+		return <-respChan, <-errChan
 	}, fmt.Sprintf("Deleting Resource Group '%s'", name))
 	return err
 }
@@ -365,10 +378,11 @@ func createVirtualNetwork(resourceGroupName string, cancel <-chan struct{}) (net
 	}
 
 	vNetClient := network.NewVirtualNetworksClient(subscriptionID)
-	vNetClient.Authorizer = token
+	vNetClient.Authorizer = autorest.NewBearerAuthorizer(token)
 
 	_, err := executeWithStatus(func() (autorest.Response, error) {
-		return vNetClient.CreateOrUpdate(resourceGroupName, networkName, vNetParameters, cancel)
+		respChan, errChan := vNetClient.CreateOrUpdate(resourceGroupName, networkName, vNetParameters, cancel)
+		return (<-respChan).Response, <-errChan
 	}, fmt.Sprintf("Creating Virtual Network '%s'", networkName))
 
 	return vNetClient, networkName, err
@@ -448,17 +462,18 @@ func getUniqueResourceGroupName(client resources.GroupsClient) (string, error) {
 	return "", fmt.Errorf("Bad response: %d", groupList.Response.StatusCode)
 }
 
-func executeWithStatus(operation func() (autorest.Response, error), message string) (autorest.Response, error) {
+func executeWithStatus(operation func() (autorest.Response, error), message string) (response autorest.Response, err error) {
 	fmt.Fprintf(output, "%s...", message)
 
-	response, err := operation()
+	response, err = operation()
+
 	if nil == err && http.StatusOK == response.StatusCode {
 		fmt.Fprintln(output, "SUCCESS")
 	} else {
 		fmt.Fprintln(output, "FAILED")
 		fmt.Fprint(os.Stderr, getFailureStatus(err, response))
 	}
-	return response, err
+	return
 }
 
 func getFailureStatus(err error, response autorest.Response) string {
