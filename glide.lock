@@ -1,22 +1,26 @@
-hash: da15ed6ed1efd6f2e8dd9b0b56c63ed32397c3880e3a3b65c72298ea03933146
-updated: 2017-09-29T11:48:01.3791216-07:00
+hash: c647f108a4f69cc1b0844336d29ea0b9377c954e03c52afdd09e3bb01784201d
+updated: 2017-11-07T09:39:07.4388644-08:00
 imports:
 - name: github.com/Azure/azure-sdk-for-go
-  version: 2592daf71ab6b95dcfc7f7437ecc1afb9ddb7360
+  version: 153d3422c65465edfcdbf2ce1707b35ab3891845
   subpackages:
-  - arm/network
-  - arm/resources/resources
+  - github.com/Azure/azure-sdk-for-go/profiles/2017-03-09/network/mgmt/network
+  - github.com/Azure/azure-sdk-for-go/profiles/2017-03-09/resources/mgmt/resources
+  - profiles/2017-03-09/network/mgmt/network
+  - profiles/2017-03-09/resources/mgmt/resources
+  - services/network/mgmt/2015-06-15/network
+  - services/resources/mgmt/2016-02-01/resources
 - name: github.com/Azure/go-autorest
-  version: f6be1abbb5abd0517522f850dd785990d373da7e
+  version: 8efdaa3a898515764e6039c03e8d953c10519915
   subpackages:
-  - autorest/azure
   - autorest
-  - autorest/to
+  - autorest/azure
   - autorest/date
-  - autorest/validation
+  - autorest/to
   - autorest/adal
+  - autorest/validation
 - name: github.com/dgrijalva/jwt-go
-  version: a539ee1a749a2b895533f979515ac7e6e0f5b650
+  version: dbeaa9332f19a944acb5736b4456cfcc02140e29
 - name: github.com/marstr/guid
   version: 8926f83764578dfb6b5017223c12135cbc967a20
 testImports: []

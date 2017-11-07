@@ -8,7 +8,7 @@
 ### Downloads and Subscriptions
 This sample assumes that you have an Azure subscription to target. If you do not already have one, you can get started for free at [azure.microsoft.com](https://azure.microsoft.com/en-us/free/). 
 
-You should also have a machine with [Go 1.7](https://golang.org/dl/) or higher installed.
+You should also have a machine with [Go 1.9](https://golang.org/dl/) or higher installed.
 
 ### System Environment
 You will need to have the following environment variables set when executing this sample:
